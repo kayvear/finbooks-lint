@@ -4,6 +4,12 @@ Generate PDF statements from real datagen output (data/raw/*.parquet).
 Usage:
     python scripts/generate_statements.py
     python scripts/generate_statements.py --customer-id <uuid>
+    python scripts/generate_statements.py --inject
+    python scripts/generate_statements.py --inject --spec config/discrepancies.yaml
+
+When --inject is given, deliberate discrepancies from the spec are applied to each
+customer's StatementData before the PDF is rendered.  The injected PDFs are written
+to data/statements_injected/ so the clean copies in data/statements/ are preserved.
 
 Requires: data/raw/*.parquet files (run generate_data.py first).
 """
@@ -40,6 +46,8 @@ from finbooks.models.transaction import (
     TradeTransaction,
     TradeSide,
 )
+from finbooks.discrepancies.injector import StatementInjector
+from finbooks.discrepancies.loader import load_spec
 from finbooks.statements.builder import StatementBuilder
 from finbooks.storage.io import read_parquet
 from finbooks.storage.paths import StoragePaths
@@ -205,6 +213,15 @@ def load_statement_data(customer_row: pd.Series, all_data: dict) -> StatementDat
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate PDF statements from parquet data.")
     parser.add_argument("--customer-id", type=str, default=None)
+    parser.add_argument(
+        "--inject", action="store_true",
+        help="Apply discrepancy injections from --spec before rendering PDFs.",
+    )
+    parser.add_argument(
+        "--spec", type=str,
+        default=str(Path(__file__).parent.parent / "config" / "discrepancies.yaml"),
+        help="Path to discrepancies YAML spec (default: config/discrepancies.yaml).",
+    )
     args = parser.parse_args()
 
     for path in (StoragePaths.customers, StoragePaths.accounts,
@@ -224,17 +241,31 @@ def main() -> None:
     if args.customer_id:
         customers_df = customers_df[customers_df["customer_id"] == args.customer_id]
 
+    # Injection setup
+    injector: StatementInjector | None = None
+    output_dir = StoragePaths.statements
+    if args.inject:
+        spec = load_spec(args.spec)
+        injector = StatementInjector(spec)
+        output_dir = settings.data_dir / "statements_injected"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        console.print(f"[yellow]Injection mode:[/yellow] {len(spec.injections)} rule(s) from {args.spec}")
+
     StoragePaths.ensure_dirs()
     builder = StatementBuilder()
 
-    console.print(f"[bold]Finbooks-Lint — Statement Generator[/bold]")
+    label = "[bold yellow]INJECTED[/bold yellow]" if args.inject else "[bold]Clean[/bold]"
+    console.print(f"[bold]Finbooks-Lint — Statement Generator[/bold] ({label})")
     console.print(f"Generating {len(customers_df)} statements for period {PERIOD.label}\n")
 
     with Progress(console=console) as progress:
         task = progress.add_task("Rendering...", total=len(customers_df))
         for _, row in customers_df.iterrows():
+            cid = row["customer_id"]
             data = load_statement_data(row, all_data)
-            out = StoragePaths.statement_pdf(row["customer_id"], PERIOD.label)
+            if injector is not None:
+                data = injector.inject(data, cid)
+            out = output_dir / f"{cid}_{PERIOD.label}.pdf"
             builder.build(data, out)
             progress.advance(task)
             console.print(f"  [green]✓[/green] {row['first_name']} {row['last_name']} → {out.name}")

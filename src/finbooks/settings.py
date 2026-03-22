@@ -1,6 +1,6 @@
 from datetime import date
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,9 +16,20 @@ class Settings(BaseSettings):
     statement_end: date = date(2024, 12, 31)
     random_seed: int = 42
 
-    # Phase 3 — agent models
+    # Agent models
     orchestrator_model: str = "claude-opus-4-6"
     specialist_model: str = "claude-sonnet-4-6"
+
+    # ── Agent mode (see docs/adr/ADR-001) ─────────────────────────────────────
+    # "fixed"  — pre-built tools for every step (extract_pdf, compare_statement, …)
+    #            deterministic, auditable, but brittle to schema changes.
+    # "hybrid" — stable I/O tools (read_pdf_raw, read_books_raw) + agent writes
+    #            comparison logic dynamically via python_repl.
+    #            flexible, adaptable, but comparison is non-deterministic across runs.
+    #
+    # Override via .env:  FINBOOKS_AGENT_MODE=fixed
+    # Override via CLI:   python scripts/validate_statements.py --agents --mode fixed
+    agent_mode: Literal["fixed", "hybrid"] = "hybrid"
 
 
 settings = Settings()

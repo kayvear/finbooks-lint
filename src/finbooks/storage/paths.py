@@ -7,6 +7,8 @@ class StoragePaths:
     raw = settings.data_dir / "raw"
     processed = settings.data_dir / "processed"
     statements = settings.data_dir / "statements"
+    statements_injected = settings.data_dir / "statements_injected"
+    validation = settings.data_dir / "validation"
 
     customers = raw / "customers.parquet"
     accounts = raw / "accounts.parquet"
@@ -25,3 +27,15 @@ class StoragePaths:
     @classmethod
     def statement_pdf(cls, customer_id: str, period_label: str) -> Path:
         return cls.statements / f"{customer_id}_{period_label}.pdf"
+
+    @classmethod
+    def break_csv(cls, customer_id: str) -> Path:
+        return cls.validation / f"breaks_{customer_id}.csv"
+
+    @classmethod
+    def all_breaks_json(cls) -> Path:
+        return cls.validation / "all_breaks.json"
+
+    @classmethod
+    def audit_memo_pdf(cls, run_id: str) -> Path:
+        return cls.validation / f"audit_memo_{run_id}.pdf"

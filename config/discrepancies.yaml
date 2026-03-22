@@ -1,0 +1,69 @@
+version: "1"
+seed: 42
+
+# ─── Injection Spec ───────────────────────────────────────────────────────────
+# Each injection describes a single deliberate discrepancy to introduce.
+#
+# Fields:
+#   id            - unique identifier for this injection (used in break reports)
+#   customer_id   - "all" applies to every customer; a UUID targets one customer
+#   error_type    - numeric_footing | cross_section | non_numeric_content | missing_extra_data
+#   target_section- positions | cover | asset_allocation | banking | transactions
+#   target_field  - field or column to corrupt
+#   side          - pdf (corrupt StatementData before render) | books (write dirty parquet copy)
+#   magnitude     - fractional inflation/deflation (0.05 = 5%) — numeric errors only
+#   swap_value    - replacement string — non-numeric content errors only
+#   drop_index    - 0-based index of row to remove — missing_extra_data errors only
+#   severity      - high | medium | low
+
+injections:
+
+  # ── Error 1: Numeric footing break ────────────────────────────────────────
+  # The equity_value reported in the asset allocation section is inflated by 5%
+  # vs the actual sum of position market values. The validator will detect:
+  #   sum(positions rows market_value) ≠ allocation.equity_value
+  - id: err_001
+    customer_id: "all"
+    error_type: numeric_footing
+    target_section: asset_allocation
+    target_field: equity_value
+    side: pdf
+    magnitude: 0.05
+    severity: high
+
+  # ── Error 2: Cross-section inconsistency ──────────────────────────────────
+  # The closing portfolio value on the cover page is inflated by 3%, making it
+  # inconsistent with the asset allocation total (equity + cash + CD).
+  - id: err_002
+    customer_id: "all"
+    error_type: cross_section
+    target_section: cover
+    target_field: closing_value
+    side: pdf
+    magnitude: 0.03
+    severity: medium
+
+  # ── Error 3: Non-numeric / content error ──────────────────────────────────
+  # The first equity position's ticker symbol is replaced with "INVALID",
+  # which cannot be found in the books & records positions.
+  - id: err_003
+    customer_id: "all"
+    error_type: non_numeric_content
+    target_section: positions
+    target_field: symbol
+    side: pdf
+    swap_value: "INVALID"
+    drop_index: 0
+    severity: low
+
+  # ── Error 4: Missing / extra data ─────────────────────────────────────────
+  # The first equity position is dropped from the PDF entirely. The books will
+  # show this position exists, but it won't appear in the rendered statement.
+  - id: err_004
+    customer_id: "all"
+    error_type: missing_extra_data
+    target_section: positions
+    target_field: row
+    side: pdf
+    drop_index: 0
+    severity: high
