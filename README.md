@@ -59,16 +59,20 @@ python scripts/validate_statements.py --injected --no-vision
 #   audit_memo_{timestamp}.pdf narrative audit memo PDF
 ```
 
-### Phase 2b — Agent-driven validation (coming next)
+### Phase 2b — Agent-driven validation
 
 ```bash
 # Requires ANTHROPIC_API_KEY in .env
+# Run from your own terminal (not inside Claude Code)
 
 # Hybrid mode (default): agent writes its own comparison logic
-python scripts/validate_statements.py --injected --agents
+unset CLAUDECODE && python scripts/validate_statements.py --injected --agents
 
 # Fixed mode: agent calls pre-built comparison tools
-python scripts/validate_statements.py --injected --agents --mode fixed
+unset CLAUDECODE && python scripts/validate_statements.py --injected --agents --mode fixed
+
+# Limit to N PDFs for quick testing
+unset CLAUDECODE && python scripts/validate_statements.py --injected --agents --limit 3
 
 # Override mode via .env: FINBOOKS_AGENT_MODE=fixed
 ```
