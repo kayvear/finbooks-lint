@@ -1,25 +1,29 @@
 """
-Validate PDF statements against books & records data (Phase 2a — no agents).
+Validate PDF statements against books & records data.
 
 Usage:
-    # Validate clean PDFs against clean books
+    # Direct pipeline (Phase 2a — no agents)
     python scripts/validate_statements.py
-
-    # Validate injected PDFs (from data/statements_injected/) against clean books
     python scripts/validate_statements.py --injected
-
-    # Validate a specific PDF
     python scripts/validate_statements.py --pdf data/statements/<file>.pdf
-
-    # Use a custom raw data directory (e.g. dirty parquet for books-side injection)
     python scripts/validate_statements.py --raw-dir data/raw_injected
 
-Pipeline per PDF:
+    # Agent pipeline (Phase 2b — MCP + specialist agents)
+    python scripts/validate_statements.py --agents
+    python scripts/validate_statements.py --injected --agents --mode fixed
+    python scripts/validate_statements.py --injected --agents --mode hybrid
+
+Pipeline per PDF (direct):
     1. Extract structured data from the PDF (pdfplumber; Claude vision as fallback)
     2. Retrieve books snapshot from parquet for the same customer + period
     3. Compare both sides → produce list[Break]
     4. Write per-customer CSV to data/validation/breaks_{customer_id}.csv
     5. After all customers: write combined JSON + narrative audit memo PDF
+
+Pipeline per PDF (agents):
+    Same outputs, but steps 1–4 are performed by a specialist agent via MCP tools.
+    Mode "fixed": pre-built tools for every step (deterministic).
+    Mode "hybrid": I/O tools + agent writes comparison logic via python_repl.
 """
 
 from __future__ import annotations
@@ -84,6 +88,40 @@ def validate_pdf(
     return comparator.compare(extracted, books)
 
 
+def _print_summary(all_results: list[ComparisonResult]) -> None:
+    from collections import Counter
+    from finbooks.comparison.models import BreakSeverity
+    from finbooks.discrepancies.schema import ErrorType
+
+    total_breaks = sum(len(r.breaks) for r in all_results)
+    console.print(f"\n[bold]Total breaks found:[/bold] {total_breaks}")
+
+    if total_breaks > 0:
+        table = Table(title="Breaks by Type", show_header=True, header_style="bold")
+        table.add_column("Error Type", style="cyan")
+        table.add_column("Count", justify="right")
+        table.add_column("High", justify="right", style="red")
+        table.add_column("Medium", justify="right", style="yellow")
+        table.add_column("Low", justify="right", style="green")
+
+        all_breaks = [b for r in all_results for b in r.breaks]
+        by_type = Counter(b.break_type for b in all_breaks)
+
+        for err_type in ErrorType:
+            count = by_type.get(err_type, 0)
+            if count == 0:
+                continue
+            type_breaks = [b for b in all_breaks if b.break_type == err_type]
+            h = sum(1 for b in type_breaks if b.severity == BreakSeverity.HIGH)
+            m = sum(1 for b in type_breaks if b.severity == BreakSeverity.MEDIUM)
+            lo = sum(1 for b in type_breaks if b.severity == BreakSeverity.LOW)
+            table.add_row(err_type.value, str(count), str(h), str(m), str(lo))
+
+        console.print(table)
+
+    console.print(f"\n[bold green]Done.[/bold green]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Validate PDF statements against books data."
@@ -103,6 +141,19 @@ def main() -> None:
     parser.add_argument(
         "--no-vision", action="store_true",
         help="Disable Claude vision fallback (useful when ANTHROPIC_API_KEY is not set).",
+    )
+    parser.add_argument(
+        "--agents", action="store_true",
+        help="Use the Phase 2b agent pipeline instead of the direct pipeline.",
+    )
+    parser.add_argument(
+        "--mode", type=str, default=None, choices=["fixed", "hybrid"],
+        help="Agent mode: 'fixed' (pre-built tools) or 'hybrid' (python_repl). "
+             "Defaults to FINBOOKS_AGENT_MODE env var or 'hybrid'.",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Process only the first N PDFs (useful for quick tests).",
     )
     args = parser.parse_args()
 
@@ -126,6 +177,9 @@ def main() -> None:
         console.print("[red]No PDF files found.[/red] Generate statements first.")
         return
 
+    if args.limit:
+        pdf_files = pdf_files[: args.limit]
+
     # ── Determine books source ────────────────────────────────────────────────
     raw_dir = Path(args.raw_dir) if args.raw_dir else None
     if raw_dir and not raw_dir.exists():
@@ -142,7 +196,29 @@ def main() -> None:
             )
             return
 
-    # ── Setup pipeline components ─────────────────────────────────────────────
+    # ── Agent pipeline (Phase 2b) ─────────────────────────────────────────────
+    if args.agents:
+        from finbooks.agents.orchestrator import run as agent_run
+        from finbooks.settings import settings
+
+        mode = args.mode or settings.agent_mode
+        console.print(f"\n[bold]Finbooks-Lint — Agent Validator[/bold] [dim](mode: {mode})[/dim]")
+        console.print(f"PDFs:  {len(pdf_files)} file(s)")
+        console.print(f"Books: {check_dir}\n")
+
+        StoragePaths.validation.mkdir(parents=True, exist_ok=True)
+        all_results = agent_run(pdf_files, mode)
+
+        json_path = StoragePaths.all_breaks_json()
+        console.print(f"\n[green]JSON report:[/green]  {json_path}")
+        memo_path = sorted(StoragePaths.validation.glob("audit_memo_*.pdf"))
+        if memo_path:
+            console.print(f"[green]Audit memo:[/green]   {memo_path[-1]}")
+
+        _print_summary(all_results)
+        return
+
+    # ── Setup pipeline components (direct, Phase 2a) ──────────────────────────
     pdf_extractor = PdfExtractor(fallback_threshold=_FALLBACK_THRESHOLD)
     vision_extractor: VisionExtractor | None = None
     if not args.no_vision:
@@ -197,37 +273,7 @@ def main() -> None:
     console.print(f"[green]Audit memo:[/green]   {memo_path}")
 
     # ── Console summary ───────────────────────────────────────────────────────
-    total_breaks = sum(len(r.breaks) for r in all_results)
-    console.print(f"\n[bold]Total breaks found:[/bold] {total_breaks}")
-
-    if total_breaks > 0:
-        table = Table(title="Breaks by Type", show_header=True, header_style="bold")
-        table.add_column("Error Type", style="cyan")
-        table.add_column("Count", justify="right")
-        table.add_column("High", justify="right", style="red")
-        table.add_column("Medium", justify="right", style="yellow")
-        table.add_column("Low", justify="right", style="green")
-
-        from collections import Counter
-        from finbooks.comparison.models import BreakSeverity
-        from finbooks.discrepancies.schema import ErrorType
-
-        all_breaks = [b for r in all_results for b in r.breaks]
-        by_type = Counter(b.break_type for b in all_breaks)
-
-        for err_type in ErrorType:
-            count = by_type.get(err_type, 0)
-            if count == 0:
-                continue
-            type_breaks = [b for b in all_breaks if b.break_type == err_type]
-            h = sum(1 for b in type_breaks if b.severity == BreakSeverity.HIGH)
-            m = sum(1 for b in type_breaks if b.severity == BreakSeverity.MEDIUM)
-            lo = sum(1 for b in type_breaks if b.severity == BreakSeverity.LOW)
-            table.add_row(err_type.value, str(count), str(h), str(m), str(lo))
-
-        console.print(table)
-
-    console.print(f"\n[bold green]Done.[/bold green]")
+    _print_summary(all_results)
 
 
 if __name__ == "__main__":

@@ -133,7 +133,8 @@ docs/
     ├── ADR-001-agent-architecture-hybrid.md   agent tool boundary: fixed vs hybrid modes
     ├── ADR-002-pdf-extraction-strategy.md     pdfplumber primary + Claude vision fallback
     ├── ADR-003-discrepancy-injection-design.md YAML spec + StatementData mutation
-    └── ADR-004-storage-format.md              parquet for data, CSV/JSON for reports
+    ├── ADR-004-storage-format.md              parquet for data, CSV/JSON for reports
+    └── ADR-005-python-repl-execution-safety.md python_repl call chain + production sandbox options
 
 src/finbooks/
 ├── settings.py              # config, asset universe, seed prices, agent_mode flag
@@ -199,3 +200,4 @@ See [`docs/adr/`](docs/adr/) for the full rationale behind each decision.
 | PDF extraction: pdfplumber primary, Claude vision fallback at confidence < 0.7 | [ADR-002](docs/adr/ADR-002-pdf-extraction-strategy.md) |
 | Injection: YAML spec + pre-render StatementData mutation, never touches originals | [ADR-003](docs/adr/ADR-003-discrepancy-injection-design.md) |
 | Storage: parquet for financial data, CSV+JSON for break reports | [ADR-004](docs/adr/ADR-004-storage-format.md) |
+| python_repl call chain, why it's a tool not Bash, production sandbox options | [ADR-005](docs/adr/ADR-005-python-repl-execution-safety.md) |

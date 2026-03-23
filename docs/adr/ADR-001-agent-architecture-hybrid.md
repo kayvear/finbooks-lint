@@ -154,3 +154,9 @@ src/finbooks/agents/
 | Option | Disposition |
 |---|---|
 | Full code-writing agent (Option B) | Not retained — LLM involvement in mechanical I/O adds cost/risk with no benefit |
+
+---
+
+## Related ADRs
+
+- **[ADR-005 — python_repl Execution Safety](ADR-005-python-repl-execution-safety.md)** — Documents where agent-generated code runs (full call chain), why `python_repl` exists as an MCP tool rather than using Bash, and options for safely running hybrid mode in production (RestrictedPython, subprocess sandbox, sidecar microservice).
